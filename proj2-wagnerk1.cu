@@ -24,22 +24,18 @@ typedef struct atomdesc {
 	float z_pos;
 } atom;
 
-typedef struct hist_entry{
-	unsigned long long d_cnt;	/* need a unsigned long long type as the count might be huge */
-} bucket;
-
-bucket * histogram;		/* list of all buckets in the histogram */
+unsigned long long * histogram;		/* list of all buckets in the histogram */
 unsigned long long  PDH_acnt;	/* total number of data points */
 int block_size;		/* Number of threads per block */
 int num_buckets;	/* total number of buckets in the histogram */
 float   PDH_res;	/* value of w */
 atom * atom_list;	/* list of all data points */
-bucket * histogram_GPU;
-bucket * temp_histogram_GPU;
+unsigned long long * histogram_GPU;
+unsigned long long * temp_histogram_GPU;
 atom * atom_list_GPU;
 
 __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned long long int *hist, int num_atoms, int num_buckets, int block_size) {
-  ulli tid = threadIdx.x + blockIdx.x * blockDim.x;
+  unsigned long long int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int h_pos = tid;
   unsigned long long int NumberOfSumLoop = 0;
   NumberOfSumLoop = (num_atoms)/block_size + ((num_atoms%block_size) ? 1:0);
@@ -55,9 +51,9 @@ __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned
   __syncthreads();
 }
 
-__global__ void GPUKernelFunction (unsigned long long PDH_acnt, float PDH_res, atom * atom_list_GPU, bucket * histogram_GPU, int num_buckets) {
+__global__ void GPUKernelFunction (unsigned long long PDH_acnt, float PDH_res, atom * atom_list_GPU, unsigned long long * histogram_GPU, int num_buckets) {
 
-  extern __shared__ ulli SHist[];
+  extern __shared__ unsigned long long SHist[];
 	/* assign register values */
 	int threadID = threadIdx.x + blockIdx.x * blockDim.x;
 	int i, h_pos;
@@ -80,8 +76,8 @@ __global__ void GPUKernelFunction (unsigned long long PDH_acnt, float PDH_res, a
 		atomicAdd(&(SHist[h_pos]), 1);
 	}
   __syncthreads();
-  for(h_pos = threadIdx.x; h_pos < num_buckets; h_pos += blockdim.x)
-    *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos).d_cnt += SHist[h_pos];
+  for(h_pos = threadIdx.x; h_pos < num_buckets; h_pos += blockDim.x)
+    *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos) += SHist[h_pos];
 }
 
 /* print the counts in all buckets of the histogram  */
@@ -102,11 +98,12 @@ void output_histogram_GPU(){
 
 void GPU_baseline() {
 
+  int num_blocks = ((PDH_acnt + block_size)/block_size);
 	/* copy histogram to device memory */
-	cudaMalloc((void**) &histogram_GPU, sizeof(bucket)*num_buckets);
-	cudaMemset(histogram_GPU, 0, sizeof(bucket)*num_buckets, cudaMemcpyHostToDevice);
-	cudaMalloc((void**) &temp_histogram_GPU, sizeof(bucket)*num_buckets*num_blocks);
-	cudaMemset(temp_histogram_GPU, 0, sizeof(bucket)*num_buckets*num_blocks, cudaMemcpyHostToDevice);
+	cudaMalloc((void**) &histogram_GPU, sizeof(unsigned long long)*num_buckets);
+	cudaMemset(histogram_GPU, 0, sizeof(unsigned long long)*num_buckets, cudaMemcpyHostToDevice);
+	cudaMalloc((void**) &temp_histogram_GPU, sizeof(unsigned long long)*num_buckets*num_blocks);
+	cudaMemset(temp_histogram_GPU, 0, sizeof(unsigned long long)*num_buckets*num_blocks);
 
 
 	/* copy atom list to device memory */
@@ -120,9 +117,9 @@ void GPU_baseline() {
 	cudaEventRecord( start, 0 );
 
 	/* Run Kernel */
-	GPUKernelFunction <<<((PDH_acnt + block_size)/block_size), block_size, sizeof(bucket)*num_buckets>>> (PDH_acnt, PDH_res, atom_list_GPU, temp_histogram_GPU, num_buckets);
-  cudaDeviceSynctonize();
-  kernelSumHistogram<<<3, 512>>>(temp_histogram_GPU, histogram_GPU, num_atoms, num_buckets, block_size);
+	GPUKernelFunction <<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>> (PDH_acnt, PDH_res, atom_list_GPU, temp_histogram_GPU, num_buckets);
+  cudaDeviceSyncronize();
+  kernelSumHistogram<<<3, 512>>>(temp_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size);
 
 	/* stop time keeping */
 	cudaEventRecord( stop, 0 );
@@ -131,7 +128,7 @@ void GPU_baseline() {
 	cudaEventElapsedTime( &elapsedTime, start, stop );
 
 	/* transfer histogram to host memory */
-	cudaMemcpy(histogram, histogram_GPU, sizeof(bucket)*num_buckets, cudaMemcpyDeviceToHost);
+	cudaMemcpy(histogram, histogram_GPU, sizeof(unsigned long long)*num_buckets, cudaMemcpyDeviceToHost);
 
 	/* print out the histogram */
 	output_histogram_GPU();
@@ -192,7 +189,7 @@ int main(int argc, char **argv)
 
 	/* allocate memory */
 	num_buckets = (int)(BOX_SIZE * 1.732 / PDH_res) + 1;
-	histogram = (bucket *)malloc(sizeof(bucket)*num_buckets);
+	histogram = (unsigned long long *)malloc(sizeof(unsigned long long)*num_buckets);
 	atom_list = (atom *)malloc(sizeof(atom)*PDH_acnt);
 
 	srand(1);
