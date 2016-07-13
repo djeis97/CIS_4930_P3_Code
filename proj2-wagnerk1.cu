@@ -87,8 +87,8 @@ void output_histogram_GPU(){
 	for(i=0; i< num_buckets; i++) {
 		if(i%5 == 0) /* we print 5 buckets in a row */
 			printf("\n%02d: ", i);
-		printf("%15lld ", histogram[i].d_cnt);
-		total_cnt += histogram[i].d_cnt;
+		printf("%15lld ", histogram[i]);
+		total_cnt += histogram[i];
 	  	/* we also want to make sure the total distance count is correct */
 		if(i == num_buckets - 1)
 			printf("\n T:%lld \n", total_cnt);
@@ -101,7 +101,7 @@ void GPU_baseline() {
   int num_blocks = ((PDH_acnt + block_size)/block_size);
 	/* copy histogram to device memory */
 	cudaMalloc((void**) &histogram_GPU, sizeof(unsigned long long)*num_buckets);
-	cudaMemset(histogram_GPU, 0, sizeof(unsigned long long)*num_buckets, cudaMemcpyHostToDevice);
+	cudaMemset(histogram_GPU, 0, sizeof(unsigned long long)*num_buckets);
 	cudaMalloc((void**) &temp_histogram_GPU, sizeof(unsigned long long)*num_buckets*num_blocks);
 	cudaMemset(temp_histogram_GPU, 0, sizeof(unsigned long long)*num_buckets*num_blocks);
 
@@ -118,7 +118,7 @@ void GPU_baseline() {
 
 	/* Run Kernel */
 	GPUKernelFunction <<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>> (PDH_acnt, PDH_res, atom_list_GPU, temp_histogram_GPU, num_buckets);
-  cudaDeviceSyncronize();
+  cudaDeviceSynchronize();
   kernelSumHistogram<<<3, 512>>>(temp_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size);
 
 	/* stop time keeping */
