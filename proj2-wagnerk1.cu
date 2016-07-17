@@ -52,7 +52,7 @@ __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned
 }
 
 __device__ void block_to_block (atom * block_a, atom * block_b, int b_length, bucket * histogram, float resolution) {
-  atom me = block_a[threadId.x];
+  atom me = block_a[threadIdx.x];
   for(int i = 0; i < b_length; i++)
     atomicAdd(&(histogram[(int)(sqrt((me.x_pos - block_b[i].x_pos) * (me.x_pos - block_b[i].x_pos) +
                                      (me.y_pos - block_b[i].y_pos) * (me.y_pos - block_b[i].y_pos) +
@@ -64,7 +64,6 @@ __device__ void block_to_block (atom * block_a, atom * block_b, int b_length, bu
 
   extern __shared__ unsigned long long SHist[];
 	/* assign register values */
-	int threadID = threadIdx.x + blockIdx.x * blockDim.x;
 	int i, h_pos;
 	float dist;
   atom * my_block = &atom_list_GPU[blockIdx.x * blockDim.x];
