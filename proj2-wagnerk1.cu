@@ -75,15 +75,15 @@ __device__ void block_to_block (atom * block_a, atom * block_b, int b_length, un
   __syncthreads();
 
 	/* loop through all points in atom list calculating distance from current point to all further points */
-	for(i = threadIdx.x + 1; i < blockDim.x; i++)
-	{
-		atom temp_atom_2 = my_block[i];
-		dist = sqrt((temp_atom_1.x_pos - temp_atom_2.x_pos) * (temp_atom_1.x_pos - temp_atom_2.x_pos) +
+  for (i = threadIdx.x + 1; i < blockDim.x && i+blockIdx.x*blockDim.x < PDH_acnt; i++)
+  {
+    atom temp_atom_2 = my_block[i];
+    dist = sqrt((temp_atom_1.x_pos - temp_atom_2.x_pos) * (temp_atom_1.x_pos - temp_atom_2.x_pos) +
                 (temp_atom_1.y_pos - temp_atom_2.y_pos) * (temp_atom_1.y_pos - temp_atom_2.y_pos) +
                 (temp_atom_1.z_pos - temp_atom_2.z_pos) * (temp_atom_1.z_pos - temp_atom_2.z_pos));
-		h_pos = (int)(dist / PDH_res);
-		atomicAdd(&(SHist[h_pos]), 1);
-	}
+    h_pos = (int)(dist / PDH_res);
+    atomicAdd(&(SHist[h_pos]), 1);
+  }
   __syncthreads();
   for(i=blockIdx.x+1; i < gridDim.x-1; i++)
     block_to_block(my_block,
