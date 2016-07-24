@@ -25,6 +25,11 @@ typedef struct atomdesc {
 	float z_pos;
 } atom;
 
+typedef struct chunk {
+  atom * c;
+  cudaEvent_t e;
+} chunk;
+
 unsigned long long * histogram;		/* list of all buckets in the histogram */
 unsigned long long  PDH_acnt;	/* total number of data points */
 int block_size;		/* Number of threads per block */
@@ -34,8 +39,16 @@ atom * atom_list;	/* list of all data points */
 unsigned long long * histogram_GPU;
 unsigned long long * temp_interchunk_histogram_GPU;
 unsigned long long * temp_intrachunk_histogram_GPU;
-atom * chunk_a;
-atom * chunk_b;
+chunk chunk_primary;
+chunk chunk_secondary;
+chunk chunk_free;
+
+void swap (void * a, void * b, size_t size) {
+  char temp[size];
+  memcpy(temp, a);
+  memcpy(a, b);
+  memcpy(b, temp);
+}
 
 /*Adds the InputHists to the hist*/
 __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned long long int *hist, int num_atoms, int num_buckets, int block_size) {
@@ -66,29 +79,26 @@ __device__ void block_to_block (atom * block_a, atom * block_b, int b_length, un
               1); // Add to the histogram bucket for this pair (me, block_b[i])
 }
 
-__global__ void GPUInterChunkKernel (unsigned long long chunk_a_size, unsigned long long chunk_b_size, float histogram_resolution, atom * chunk_a, atom * chunk_b, unsigned long long * histogram_GPU, int num_buckets) {
+__global__ void GPUInterChunkKernel (unsigned long long chunk_primary_size, unsigned long long chunk_secondary_size, float histogram_resolution, atom * chunk_primary, atom * chunk_secondary, unsigned long long * histogram_GPU, int num_buckets) {
   extern __shared__ unsigned long long SHist[];
   int i;
-  atom * my_block = &chunk_a[blockIdx.x * blockDim.x]; // Pointer to this block's atoms in chunk a
-
+  atom * my_block = &chunk_primary[blockIdx.x * blockDim.x];
   for(int h_pos=threadIdx.x; h_pos < num_buckets; h_pos+=blockDim.x) // Clear local histogram
     SHist[h_pos] = 0;
 
   __syncthreads();
 
-  if (blockIdx.x*blockDim.x+threadIdx.x < chunk_a_size) { // If this thread has an atom
-    int chunk_b_blocks = (int)(chunk_b_size/blockDim.x) + 1;
-    for(i=0; i < chunk_b_blocks-1; i++) // Loop through all but last block in chunk b
-      {
-        block_to_block(my_block,
-                       &chunk_b[i*blockDim.x],
-                       blockDim.x,
-                       SHist,
-                       histogram_resolution); // Compare my block to this block
-      }
+  if (blockIdx.x*blockDim.x+threadIdx.x < chunk_primary_size) { // If this thread has an atom
+    int chunk_secondary_blocks = (int)(chunk_secondary_size/blockDim.x) + 1;
+    for(i=0; i < chunk_secondary_blocks-1; i++) // Loop through all but last block in chunk b
+      block_to_block(my_block,
+                     &chunk_primary[i*blockDim.x],
+                     blockDim.x,
+                     SHist,
+                     histogram_resolution);
     block_to_block(my_block,
-                   &chunk_b[i*blockDim.x],
-                   chunk_b_size-i*blockDim.x,
+                   &chunk_primary[i*blockDim.x],
+                   chunk_secondary_size-i*blockDim.x,
                    SHist,
                    histogram_resolution); // Handle last block in chunk b (which may be small)
   }
@@ -97,12 +107,12 @@ __global__ void GPUInterChunkKernel (unsigned long long chunk_a_size, unsigned l
     *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos) += SHist[h_pos]; // Commit local histogram to private histogram
 }
 
-__global__ void GPUIntraChunkKernel (unsigned long long chunk_size, float histogram_resolution, atom * chunk_a, unsigned long long * histogram_GPU, int num_buckets) {
+__global__ void GPUIntraChunkKernel (unsigned long long chunk_size, float histogram_resolution, atom * chunk_primary, unsigned long long * histogram_GPU, int num_buckets) {
 
   extern __shared__ unsigned long long SHist[];
 	int i, h_pos;
 	float dist;
-  atom * my_block = &chunk_a[blockIdx.x * blockDim.x]; // Pointer to this blocks atoms in chunk a
+  atom * my_block = &chunk_primary[blockIdx.x * blockDim.x]; // Pointer to this blocks atoms in chunk a
   atom temp_atom_1 = my_block[threadIdx.x]; // This thread's atom
 
   for(h_pos=threadIdx.x; h_pos < num_buckets; h_pos+=blockDim.x) // Clear local histogram
@@ -124,12 +134,12 @@ __global__ void GPUIntraChunkKernel (unsigned long long chunk_size, float histog
   /* Loop through all but last remaining blocks and compare this block with it*/
   for(i=blockIdx.x+1; i < gridDim.x-1; i++)
     block_to_block(my_block,
-                   &chunk_a[i*blockDim.x],
+                   &chunk_primary[i*blockDim.x],
                    blockDim.x,
                    SHist,
                    histogram_resolution);
   block_to_block(my_block,
-                 &chunk_a[i*blockDim.x],
+                 &chunk_primary[i*blockDim.x],
                  chunk_size-i*blockDim.x, // Last block may be small
                  SHist,
                  histogram_resolution);
@@ -167,29 +177,44 @@ void GPU_baseline() {
 	cudaMemset(temp_interchunk_histogram_GPU, 0, sizeof(unsigned long long)*num_buckets*num_blocks);
 	cudaMalloc((void**) &temp_intrachunk_histogram_GPU, sizeof(unsigned long long)*num_buckets*num_blocks);
 	cudaMemset(temp_intrachunk_histogram_GPU, 0, sizeof(unsigned long long)*num_buckets*num_blocks);
-	
+	/* copy atom list to device memory */
+	cudaMalloc((void**) &chunk_primary.c, sizeof(atom) * PDH_acnt);
+	cudaMalloc((void**) &chunk_secondary.c, sizeof(atom) * PDH_acnt);
+	cudaMalloc((void**) &chunk_free.c, sizeof(atom) * PDH_acnt);
+  cudaEventCreate(&chunk_primary.e);
+  cudaEventCreate(&chunk_secondary.e);
+  cudaEventCreate(&chunk_free.e);
 	/* start time keeping */
 	cudaEvent_t start, stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
 	cudaEventRecord( start, 0 );
 
-	/* copy atom list to device memory */
-	cudaMalloc((void**) &chunk_a, sizeof(atom) * CHUNK_SIZE);
-	cudaMalloc((void**) &chunk_b, sizeof(atom) * CHUNK_SIZE);
-
+  int size_a, size_b;
+  size_a = (num_chunks==1) ? PDH_acnt-i*CHUNK_SIZE : CHUNK_SIZE;
+  cudaMemcpy(chunk_primary, atom_list, sizeof(atom) * size_a, cudaMemcpyHostToDevice); // Copy to chunk a
+  cudaEventRecord(chunk_primary.e);
 	/* Run Kernel */
 	for(int i=0;i<num_chunks;i++){ // Loop over all chunks
-    int size_a = (i==num_chunks-1) ? PDH_acnt-i*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
-    cudaMemcpy(chunk_a, &atom_list[i*CHUNK_SIZE], sizeof(atom) * size_a, cudaMemcpyHostToDevice); // Copy to chunk a
+    size_a = (i==num_chunks-1) ? PDH_acnt-i*CHUNK_SIZE : CHUNK_SIZE;
+    cudaEventSynchronize(chunk_primary.e); // Wait for the copy
     // Handle comparisons internal to this chunk
-    GPUIntraChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, PDH_res, chunk_a, temp_intrachunk_histogram_GPU, num_buckets);
-    for(int j=i+1; j<num_chunks;j++){ // Loop through remaining chunks
-      int size_b = (j==num_chunks-1) ? PDH_acnt-j*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
-      cudaMemcpy(chunk_b, &atom_list[j*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice); // Copy to chunk b
-      // Compare chunk a to chunk b
-      GPUInterChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, size_b, PDH_res, chunk_a, chunk_b, temp_interchunk_histogram_GPU, num_buckets);
+    GPUIntraChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, PDH_res, chunk_primary, temp_intrachunk_histogram_GPU, num_buckets);
+    if (i+1 < num_chunks){ // If there is another chunk
+      size_b = PDH_acnt-(num_chunks-1)*CHUNK_SIZE; // Last chunk may be small
+      cudaMemcpy(chunk_secondary.c, &atom_list[(num_chunks-1)*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice); // Copy last chunk to b
+      cudaEventRecord(chunk_secondary.e);
+      for(int j=num_chunks-1; j>i;j--){ // Loop through remaining chunks in reverse (so last secondary is next primary)
+        cudaEventSynchronize(chunk_secondary.e);
+        size_b = CHUNK_SIZE;
+        cudaMemcpy(chunk_free.c, &atom_list[j*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice);
+        cudaEventRecord(chunk_free.e);
+        // Compare chunk a to chunk b
+        GPUInterChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, size_b, PDH_res, chunk_primary, chunk_secondary, temp_interchunk_histogram_GPU, num_buckets);
+        swap(chunk_secondary, chunk_free);
+      }
     }
+    swap(chunk_primary, chunk_secondary);
   }
 
   cudaDeviceSynchronize();
@@ -217,8 +242,12 @@ void GPU_baseline() {
 	
   cudaFree(temp_intrachunk_histogram_GPU);
   cudaFree(temp_interchunk_histogram_GPU);
-  cudaFree(chunk_a);
-  cudaFree(chunk_b);
+  cudaFree(chunk_primary.c);
+  cudaFree(chunk_secondary.c);
+  cudaFree(chunk_free.c);
+  cudaFree(chunk_primary.e);
+  cudaFree(chunk_secondary.e);
+  cudaFree(chunk_free.e);
   cudaFree(histogram_GPU);
 }
 
