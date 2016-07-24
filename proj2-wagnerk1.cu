@@ -16,7 +16,7 @@
 
 
 #define BOX_SIZE 23000 /* size of the data box on one dimension */
-#define CHUNK_SIZE 1048576 /*2^20*/
+#define CHUNK_SIZE 16384 /*2^14* size of a single chunk of atoms/
 
 /* descriptors for single atom in the tree */
 typedef struct atomdesc {
@@ -67,20 +67,22 @@ __global__ void GPUInterChunkKernel (unsigned long long chunk_a_size, unsigned l
   extern __shared__ unsigned long long SHist[];
   atom * my_block = &chunk_a[blockIdx.x * blockDim.x];
   if (blockIdx.x*blockDim.x+threadIdx.x < chunk_a_size) {
-    for(i=0; i < gridDim.x-1; i++)
+    for(int i=0; i < gridDim.x-1; i++)
+	{
       block_to_block(my_block,
                      &chunk_a[i*blockDim.x],
                      blockDim.x,
                      SHist,
                      histogram_resolution);
-    block_to_block(my_block,
-                   &chunk_a[i*blockDim.x],
-                   chunk_b_size-i*blockDim.x,
-                   SHist,
-                   histogram_resolution);
+      block_to_block(my_block,
+                     &chunk_a[i*blockDim.x],
+                     chunk_b_size-i*blockDim.x,
+                     SHist,
+                     histogram_resolution);
+	}
   }
   __syncthreads();
-  for(h_pos = threadIdx.x; h_pos < num_buckets; h_pos += blockDim.x)
+  for(int h_pos = threadIdx.x; h_pos < num_buckets; h_pos += blockDim.x)
     *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos) += SHist[h_pos];
 }
 
@@ -168,7 +170,7 @@ void GPU_baseline() {
 	for(int i=0;i<num_chunks;i++){
     int size_a = (i==num_chunks-1) ? PDH_acnt-i*CHUNK_SIZE : CHUNK_SIZE;
     cudaMemcpy(chunk_a, &atom_list[i*CHUNK_SIZE], sizeof(atom) * size_a, cudaMemcpyHostToDevice);
-    GPUIntraChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size, PDH_res, chunk_a, temp_intrachunk_histogram_GPU, num_buckets);
+    GPUIntraChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, PDH_res, chunk_a, temp_intrachunk_histogram_GPU, num_buckets);
     for(int j=i+1; j<num_chunks;j++){
       int size_b = (j==num_chunks-1) ? PDH_acnt-j*CHUNK_SIZE : CHUNK_SIZE;
       cudaMemcpy(chunk_b, &atom_list[j*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice);
@@ -198,6 +200,7 @@ void GPU_baseline() {
 	/* free cuda timekeeping */
 	cudaEventDestroy( start );
 	cudaEventDestroy( stop );
+	
   cudaFree(temp_intrachunk_histogram_GPU);
   cudaFree(temp_interchunk_histogram_GPU);
   cudaFree(chunk_a);
