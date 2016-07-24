@@ -147,6 +147,8 @@ void GPU_baseline() {
 
   int num_chunks = ((PDH_acnt + CHUNK_SIZE)/CHUNK_SIZE);
   int num_blocks = ((PDH_acnt + block_size)/block_size);
+  
+
 	/* copy histogram to device memory */
 	cudaMalloc((void**) &histogram_GPU, sizeof(unsigned long long)*num_buckets);
 	cudaMemset(histogram_GPU, 0, sizeof(unsigned long long)*num_buckets);
@@ -154,17 +156,16 @@ void GPU_baseline() {
 	cudaMemset(temp_interchunk_histogram_GPU, 0, sizeof(unsigned long long)*num_buckets*num_blocks);
 	cudaMalloc((void**) &temp_intrachunk_histogram_GPU, sizeof(unsigned long long)*num_buckets*num_blocks);
 	cudaMemset(temp_intrachunk_histogram_GPU, 0, sizeof(unsigned long long)*num_buckets*num_blocks);
-
-
-	/* copy atom list to device memory */
-	cudaMalloc((void**) &chunk_a, sizeof(atom) * PDH_acnt);
-	cudaMalloc((void**) &chunk_b, sizeof(atom) * PDH_acnt);
-
+	
 	/* start time keeping */
 	cudaEvent_t start, stop;
 	cudaEventCreate(&start);
 	cudaEventCreate(&stop);
 	cudaEventRecord( start, 0 );
+
+	/* copy atom list to device memory */
+	cudaMalloc((void**) &chunk_a, sizeof(atom) * CHUNK_SIZE);
+	cudaMalloc((void**) &chunk_b, sizeof(atom) * CHUNK_SIZE);
 
 	/* Run Kernel */
 	for(int i=0;i<num_chunks;i++){
@@ -191,7 +192,7 @@ void GPU_baseline() {
 
 	/* transfer histogram to host memory */
 	cudaMemcpy(histogram, histogram_GPU, sizeof(unsigned long long)*num_buckets, cudaMemcpyDeviceToHost);
-
+	
 	/* print out the histogram */
 	output_histogram_GPU();
 	elapsedTime = elapsedTime/1000;
