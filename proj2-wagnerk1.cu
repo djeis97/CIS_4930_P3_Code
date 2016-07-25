@@ -37,6 +37,7 @@ unsigned long long * temp_intrachunk_histogram_GPU;
 atom * chunk_a;
 atom * chunk_b;
 
+/*Adds the InputHists to the hist*/
 __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned long long int *hist, int num_atoms, int num_buckets, int block_size) {
   unsigned long long int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int h_pos = tid;
@@ -54,54 +55,59 @@ __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned
   __syncthreads();
 }
 
-__device__ void block_to_block (atom * block_a, atom * block_b, int b_length, unsigned long long * histogram, float resolution) {
-  atom me = block_a[threadIdx.x];
-  for(int i = 0; i < b_length; i++)
+/*Compares all the atoms in block a with all the atoms in block b*/
+__device__ void block_to_block (atom * block_a, int a_length, atom * block_b, int b_length, unsigned long long * histogram, float resolution) {
+  atom me = block_a[threadIdx.x]; // Cache my atom
+  for(int i = 0; i < b_length; i++) // Loop through the atoms in block b
     atomicAdd(&(histogram[(int)(sqrt((me.x_pos - block_b[i].x_pos) * (me.x_pos - block_b[i].x_pos) +
                                      (me.y_pos - block_b[i].y_pos) * (me.y_pos - block_b[i].y_pos) +
                                      (me.z_pos - block_b[i].z_pos) * (me.z_pos - block_b[i].z_pos)) / resolution)]),
-              1);
+              1); // Add to the histogram bucket for this pair (me, block_b[i])
 }
 
 __global__ void GPUInterChunkKernel (unsigned long long chunk_a_size, unsigned long long chunk_b_size, float histogram_resolution, atom * chunk_a, atom * chunk_b, unsigned long long * histogram_GPU, int num_buckets) {
   extern __shared__ unsigned long long SHist[];
   int i;
-  atom * my_block = &chunk_a[blockIdx.x * blockDim.x];
-  if (blockIdx.x*blockDim.x+threadIdx.x < chunk_a_size) {
-    for(i=0; i < gridDim.x-1; i++)
+  atom * my_block = &chunk_a[blockIdx.x * blockDim.x]; // Pointer to this block's atoms in chunk a
+
+  for(h_pos=threadIdx.x; h_pos < num_buckets; h_pos+=blockDim.x) // Clear local histogram
+    SHist[h_pos] = 0;
+
+  if (blockIdx.x*blockDim.x+threadIdx.x < chunk_a_size) { // If this thread has an atom
+    int chunk_b_blocks = chunk_b_size/blockDim.x + 1;
+    for(i=0; i < chunk_b_blocks-1; i++) // Loop through all but last block in chunk b
       {
         block_to_block(my_block,
                        &chunk_a[i*blockDim.x],
                        blockDim.x,
                        SHist,
-                       histogram_resolution);
+                       histogram_resolution); // Compare my block to this block
       }
     block_to_block(my_block,
                    &chunk_a[i*blockDim.x],
                    chunk_b_size-i*blockDim.x,
                    SHist,
-                   histogram_resolution);
+                   histogram_resolution); // Handle last block in chunk b (which may be small)
   }
   __syncthreads();
   for(int h_pos = threadIdx.x; h_pos < num_buckets; h_pos += blockDim.x)
-    *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos) += SHist[h_pos];
+    *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos) += SHist[h_pos]; // Commit local histogram to private histogram
 }
 
 __global__ void GPUIntraChunkKernel (unsigned long long chunk_size, float histogram_resolution, atom * chunk_a, unsigned long long * histogram_GPU, int num_buckets) {
 
   extern __shared__ unsigned long long SHist[];
-	/* assign register values */
 	int i, h_pos;
 	float dist;
-  atom * my_block = &chunk_a[blockIdx.x * blockDim.x];
-  atom temp_atom_1 = my_block[threadIdx.x];
+  atom * my_block = &chunk_a[blockIdx.x * blockDim.x]; // Pointer to this blocks atoms in chunk a
+  atom temp_atom_1 = my_block[threadIdx.x]; // This thread's atom
 
-  for(h_pos=threadIdx.x; h_pos < num_buckets; h_pos+=blockDim.x)
+  for(h_pos=threadIdx.x; h_pos < num_buckets; h_pos+=blockDim.x) // Clear local histogram
     SHist[h_pos] = 0;
 
   __syncthreads();
 
-	/* loop through all points in atom list calculating distance from current point to all further points */
+	/* loop through all points in atom list calculating distance from current point to all further points in this block*/
   for (i = threadIdx.x + 1; i < blockDim.x && i+blockIdx.x*blockDim.x < chunk_size; i++)
   {
     atom temp_atom_2 = my_block[i];
@@ -112,6 +118,7 @@ __global__ void GPUIntraChunkKernel (unsigned long long chunk_size, float histog
     atomicAdd(&(SHist[h_pos]), 1);
   }
   __syncthreads();
+  /* Loop through all but last remaining blocks and compare this block with it*/
   for(i=blockIdx.x+1; i < gridDim.x-1; i++)
     block_to_block(my_block,
                    &chunk_a[i*blockDim.x],
@@ -125,7 +132,7 @@ __global__ void GPUIntraChunkKernel (unsigned long long chunk_size, float histog
                  histogram_resolution);
   __syncthreads();
   for(h_pos = threadIdx.x; h_pos < num_buckets; h_pos += blockDim.x)
-    *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos) += SHist[h_pos];
+    *(histogram_GPU+(num_buckets*blockIdx.x)+h_pos) += SHist[h_pos]; // Commit local histogram to private histogram
 }
 
 /* print the counts in all buckets of the histogram  */
@@ -169,21 +176,23 @@ void GPU_baseline() {
 	cudaMalloc((void**) &chunk_b, sizeof(atom) * CHUNK_SIZE);
 
 	/* Run Kernel */
-	for(int i=0;i<num_chunks;i++){
-    int size_a = (i==num_chunks-1) ? PDH_acnt-i*CHUNK_SIZE : CHUNK_SIZE;
-    cudaMemcpy(chunk_a, &atom_list[i*CHUNK_SIZE], sizeof(atom) * size_a, cudaMemcpyHostToDevice);
+	for(int i=0;i<num_chunks;i++){ // Loop over all chunks
+    int size_a = (i==num_chunks-1) ? PDH_acnt-i*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
+    cudaMemcpy(chunk_a, &atom_list[i*CHUNK_SIZE], sizeof(atom) * size_a, cudaMemcpyHostToDevice); // Copy to chunk a
+    // Handle comparisons internal to this chunk
     GPUIntraChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, PDH_res, chunk_a, temp_intrachunk_histogram_GPU, num_buckets);
-    for(int j=i+1; j<num_chunks;j++){
-      int size_b = (j==num_chunks-1) ? PDH_acnt-j*CHUNK_SIZE : CHUNK_SIZE;
-      cudaMemcpy(chunk_b, &atom_list[j*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice);
+    for(int j=i+1; j<num_chunks;j++){ // Loop through remaining chunks
+      int size_b = (j==num_chunks-1) ? PDH_acnt-j*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
+      cudaMemcpy(chunk_b, &atom_list[j*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice); // Copy to chunk b
+      // Compare chunk a to chunk b
       GPUInterChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, size_b, PDH_res, chunk_a, chunk_b, temp_interchunk_histogram_GPU, num_buckets);
     }
   }
 
   cudaDeviceSynchronize();
-  kernelSumHistogram<<<3, 512>>>(temp_interchunk_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size);
+  kernelSumHistogram<<<3, 512>>>(temp_interchunk_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size); // Add internal comparisons to histogram
   cudaDeviceSynchronize();
-  kernelSumHistogram<<<3, 512>>>(temp_intrachunk_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size);
+  kernelSumHistogram<<<3, 512>>>(temp_intrachunk_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size); // Add chunk-to-chunk comparisons to histogram
 
 	/* stop time keeping */
 	cudaEventRecord( stop, 0 );
