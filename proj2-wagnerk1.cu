@@ -56,7 +56,7 @@ __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned
 }
 
 /*Compares all the atoms in block a with all the atoms in block b*/
-__device__ void block_to_block (atom * block_a, int a_length, atom * block_b, int b_length, unsigned long long * histogram, float resolution) {
+__device__ void block_to_block (atom * block_a, atom * block_b, int b_length, unsigned long long * histogram, float resolution) {
   atom me = block_a[threadIdx.x]; // Cache my atom
   for(int i = 0; i < b_length; i++) // Loop through the atoms in block b
     atomicAdd(&(histogram[(int)(sqrt((me.x_pos - block_b[i].x_pos) * (me.x_pos - block_b[i].x_pos) +
@@ -70,7 +70,7 @@ __global__ void GPUInterChunkKernel (unsigned long long chunk_a_size, unsigned l
   int i;
   atom * my_block = &chunk_a[blockIdx.x * blockDim.x]; // Pointer to this block's atoms in chunk a
 
-  for(h_pos=threadIdx.x; h_pos < num_buckets; h_pos+=blockDim.x) // Clear local histogram
+  for(int h_pos=threadIdx.x; h_pos < num_buckets; h_pos+=blockDim.x) // Clear local histogram
     SHist[h_pos] = 0;
 
   if (blockIdx.x*blockDim.x+threadIdx.x < chunk_a_size) { // If this thread has an atom
