@@ -163,8 +163,8 @@ void output_histogram_GPU(){
 
 void GPU_baseline() {
 
-  int num_chunks = ceil(PDH_acnt/CHUNK_SIZE);
-  int num_blocks = ceil(CHUNK_SIZE/block_size);
+  int num_chunks = ceil((float)PDH_acnt/CHUNK_SIZE);
+  int num_blocks = ceil((float)CHUNK_SIZE/block_size);
   
 
 	/* prepare histogram on device memory */
