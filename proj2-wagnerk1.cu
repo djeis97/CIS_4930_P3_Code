@@ -193,9 +193,9 @@ void GPU_baseline() {
   }
 
   cudaDeviceSynchronize();
-  kernelSumHistogram<<<3, 512>>>(temp_interchunk_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size); // Add internal comparisons to histogram
+  kernelSumHistogram<<<3, 512>>>(temp_interchunk_histogram_GPU, histogram_GPU, CHUNK_SIZE, num_buckets, block_size); // Add internal comparisons to histogram
   cudaDeviceSynchronize();
-  kernelSumHistogram<<<3, 512>>>(temp_intrachunk_histogram_GPU, histogram_GPU, PDH_acnt, num_buckets, block_size); // Add chunk-to-chunk comparisons to histogram
+  kernelSumHistogram<<<3, 512>>>(temp_intrachunk_histogram_GPU, histogram_GPU, CHUNK_SIZE, num_buckets, block_size); // Add chunk-to-chunk comparisons to histogram
 
 	/* stop time keeping */
 	cudaEventRecord( stop, 0 );
