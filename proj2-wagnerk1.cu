@@ -16,7 +16,7 @@
 
 
 #define BOX_SIZE 23000 /* size of the data box on one dimension */
-#define CHUNK_SIZE 1024 /*2^14* size of a single chunk of atoms/
+#define CHUNK_SIZE 32768 /* size of a single chunk of atoms*/
 
 /* descriptors for single atom in the tree */
 typedef struct atomdesc {
