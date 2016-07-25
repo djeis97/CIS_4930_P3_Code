@@ -74,7 +74,7 @@ __global__ void GPUInterChunkKernel (unsigned long long chunk_a_size, unsigned l
     SHist[h_pos] = 0;
 
   if (blockIdx.x*blockDim.x+threadIdx.x < chunk_a_size) { // If this thread has an atom
-    int chunk_b_blocks = chunk_b_size/blockDim.x + 1;
+    int chunk_b_blocks = ceil(chunk_b_size/blockDim.x);
     for(i=0; i < chunk_b_blocks-1; i++) // Loop through all but last block in chunk b
       {
         block_to_block(my_block,
@@ -157,7 +157,7 @@ void GPU_baseline() {
   int num_blocks = ceil(CHUNK_SIZE/block_size);
   
 
-	/* copy histogram to device memory */
+	/* prepare histogram on device memory */
 	cudaMalloc((void**) &histogram_GPU, sizeof(unsigned long long)*num_buckets);
 	cudaMemset(histogram_GPU, 0, sizeof(unsigned long long)*num_buckets);
 	cudaMalloc((void**) &temp_interchunk_histogram_GPU, sizeof(unsigned long long)*num_buckets*num_blocks);
