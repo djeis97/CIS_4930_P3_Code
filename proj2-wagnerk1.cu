@@ -92,12 +92,12 @@ __global__ void GPUInterChunkKernel (unsigned long long chunk_primary_size, unsi
     int chunk_secondary_blocks = (int)(chunk_secondary_size/blockDim.x) + 1;
     for(i=0; i < chunk_secondary_blocks-1; i++) // Loop through all but last block in chunk b
       block_to_block(my_block,
-                     &chunk_primary[i*blockDim.x],
+                     &chunk_secondary[i*blockDim.x],
                      blockDim.x,
                      SHist,
                      histogram_resolution);
     block_to_block(my_block,
-                   &chunk_primary[i*blockDim.x],
+                   &chunk_secondary[i*blockDim.x],
                    chunk_secondary_size-i*blockDim.x,
                    SHist,
                    histogram_resolution); // Handle last block in chunk b (which may be small)
