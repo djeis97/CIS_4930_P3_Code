@@ -49,7 +49,7 @@ __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned
     for(int i=0;i<NumberOfSumLoop;i++){
       tmpAns = tmpAns + *(InputHists+(i*num_buckets)+h_pos);
     }
-    hist[h_pos] = tmpAns;
+    hist[h_pos] += tmpAns;
     h_pos += blockDim.x * gridDim.x;
   }
   __syncthreads();
@@ -193,9 +193,9 @@ void GPU_baseline() {
   }
 
   cudaDeviceSynchronize();
-  kernelSumHistogram<<<3, 512>>>(temp_interchunk_histogram_GPU, histogram_GPU, CHUNK_SIZE, num_buckets, block_size); // Add internal comparisons to histogram
+  kernelSumHistogram<<<3, 512>>>(temp_intrachunk_histogram_GPU, histogram_GPU, CHUNK_SIZE, num_buckets, block_size); // Add internal comparisons to histogram
   cudaDeviceSynchronize();
-  kernelSumHistogram<<<3, 512>>>(temp_intrachunk_histogram_GPU, histogram_GPU, CHUNK_SIZE, num_buckets, block_size); // Add chunk-to-chunk comparisons to histogram
+  kernelSumHistogram<<<3, 512>>>(temp_interchunk_histogram_GPU, histogram_GPU, CHUNK_SIZE, num_buckets, block_size); // Add chunk-to-chunk comparisons to histogram
 
 	/* stop time keeping */
 	cudaEventRecord( stop, 0 );
