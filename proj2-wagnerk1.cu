@@ -65,21 +65,22 @@ __device__ void block_to_block (atom * block_a, atom * block_b, int b_length, un
 
 __global__ void GPUInterChunkKernel (unsigned long long chunk_a_size, unsigned long long chunk_b_size, float histogram_resolution, atom * chunk_a, atom * chunk_b, unsigned long long * histogram_GPU, int num_buckets) {
   extern __shared__ unsigned long long SHist[];
+  int i;
   atom * my_block = &chunk_a[blockIdx.x * blockDim.x];
   if (blockIdx.x*blockDim.x+threadIdx.x < chunk_a_size) {
-    for(int i=0; i < gridDim.x-1; i++)
-	{
-      block_to_block(my_block,
-                     &chunk_a[i*blockDim.x],
-                     blockDim.x,
-                     SHist,
-                     histogram_resolution);
-      block_to_block(my_block,
-                     &chunk_a[i*blockDim.x],
-                     chunk_b_size-i*blockDim.x,
-                     SHist,
-                     histogram_resolution);
-	}
+    for(i=0; i < gridDim.x-1; i++)
+      {
+        block_to_block(my_block,
+                       &chunk_a[i*blockDim.x],
+                       blockDim.x,
+                       SHist,
+                       histogram_resolution);
+      }
+    block_to_block(my_block,
+                   &chunk_a[i*blockDim.x],
+                   chunk_b_size-i*blockDim.x,
+                   SHist,
+                   histogram_resolution);
   }
   __syncthreads();
   for(int h_pos = threadIdx.x; h_pos < num_buckets; h_pos += blockDim.x)
