@@ -197,7 +197,8 @@ void GPU_baseline() {
       // Compare chunk a to chunk b
       GPUInterChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, size_b, PDH_res, chunk_a, chunk_b, temp_interchunk_histogram_GPU, num_buckets);
     }
-
+    swap(&chunk_a, &chunk_b, sizeof(atom *));
+    size_a = size_b;
   }
 
   cudaDeviceSynchronize();
