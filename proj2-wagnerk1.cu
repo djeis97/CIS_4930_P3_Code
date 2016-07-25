@@ -44,8 +44,8 @@ chunk chunk_primary;
 chunk chunk_secondary;
 chunk chunk_free;
 atom * pinned_host_chunk;
-cuda_stream_t copy_stream;
-cuda_stream_t kernel_stream;
+cudaStream_t copy_stream;
+cudaStream_t kernel_stream;
 
 void swap (void * a, void * b, size_t size) {
   char temp[size];
