@@ -191,7 +191,7 @@ void GPU_baseline() {
     cudaMemcpy(chunk_a, &atom_list[i*CHUNK_SIZE], sizeof(atom) * size_a, cudaMemcpyHostToDevice); // Copy to chunk a
     // Handle comparisons internal to this chunk
     GPUIntraChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, PDH_res, chunk_a, temp_intrachunk_histogram_GPU, num_buckets);
-    for(int j=num_chunks-1; j<i;j--){ // Loop through remaining chunks
+    for(int j=num_chunks-1; j>i;j--){ // Loop through remaining chunks
       int size_b = (j==num_chunks-1) ? PDH_acnt-j*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
       cudaMemcpy(chunk_b, &atom_list[j*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice); // Copy to chunk b
       // Compare chunk a to chunk b
