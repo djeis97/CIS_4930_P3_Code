@@ -37,6 +37,13 @@ unsigned long long * temp_intrachunk_histogram_GPU;
 atom * chunk_a;
 atom * chunk_b;
 
+void swap (void * a, void * b, size_t size) {
+  char temp[size];
+  memcpy(temp, a, size);
+  memcpy(a, b, size);
+  memcpy(b, temp, size);
+}
+
 /*Adds the InputHists to the hist*/
 __global__ void kernelSumHistogram( unsigned long long int *InputHists, unsigned long long int *hist, int num_atoms, int num_buckets, int block_size) {
   unsigned long long int tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -178,18 +185,21 @@ void GPU_baseline() {
 	cudaMalloc((void**) &chunk_a, sizeof(atom) * CHUNK_SIZE);
 	cudaMalloc((void**) &chunk_b, sizeof(atom) * CHUNK_SIZE);
 
+  int size_a, size_b;
+  size_a = (1==num_chunks) ? PDH_acnt : CHUNK_SIZE; // Last chunk may be small
+  cudaMemcpy(chunk_a, atom_list, sizeof(atom) * size_a, cudaMemcpyHostToDevice); // Copy to chunk a
 	/* Run Kernel */
 	for(int i=0;i<num_chunks;i++){ // Loop over all chunks
-    int size_a = (i==num_chunks-1) ? PDH_acnt-i*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
-    cudaMemcpy(chunk_a, &atom_list[i*CHUNK_SIZE], sizeof(atom) * size_a, cudaMemcpyHostToDevice); // Copy to chunk a
     // Handle comparisons internal to this chunk
     GPUIntraChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, PDH_res, chunk_a, temp_intrachunk_histogram_GPU, num_buckets);
-    for(int j=i+1; j<num_chunks;j++){ // Loop through remaining chunks
-      int size_b = (j==num_chunks-1) ? PDH_acnt-j*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
+    for(int j=num_chunks-1; j>i;j--){ // Loop through remaining chunks
+      size_b = (j==num_chunks-1) ? PDH_acnt-j*CHUNK_SIZE : CHUNK_SIZE; // Last chunk may be small
       cudaMemcpy(chunk_b, &atom_list[j*CHUNK_SIZE], sizeof(atom) * size_b, cudaMemcpyHostToDevice); // Copy to chunk b
       // Compare chunk a to chunk b
       GPUInterChunkKernel<<<num_blocks, block_size, sizeof(unsigned long long)*num_buckets>>>(size_a, size_b, PDH_res, chunk_a, chunk_b, temp_interchunk_histogram_GPU, num_buckets);
     }
+    swap(chunk_a, chunk_b, sizeof(atom *));
+    size_a = size_b;
   }
 
   cudaDeviceSynchronize();
